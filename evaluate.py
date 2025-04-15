@@ -496,7 +496,7 @@ def main(args):
         print("Analyzing privacy-accuracy trade-off...")
         results = privacy_accuracy_tradeoff(
             full_data, num_users, num_items, 
-            epsilons=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
+            epsilons=[0.1, 0.5]
         )
         plot_privacy_accuracy_tradeoff(results)
     
@@ -544,9 +544,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Privacy-Preserving Recommendation Evaluation')
     
     # Data paths
-    parser.add_argument('--users_path', type=str, default='users.csv', help='Path to users.csv')
-    parser.add_argument('--products_path', type=str, default='products.csv', help='Path to products.csv')
-    parser.add_argument('--transactions_path', type=str, default='transactions.csv', help='Path to transactions.csv')
+    parser.add_argument('--users_path', type=str, default='data/users.csv', help='Path to users.csv')
+    parser.add_argument('--products_path', type=str, default='data/products.csv', help='Path to products.csv')
+    parser.add_argument('--transactions_path', type=str, default='data/transactions.csv', help='Path to transactions.csv')
     
     # Analysis options
     parser.add_argument('--privacy_accuracy_tradeoff', action='store_true', help='Run privacy-accuracy trade-off analysis')
@@ -560,3 +560,11 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     main(args)
+
+'''
+# Run all analyses
+python evaluate.py --users_path data/users.csv --products_path data/products.csv --transactions_path data/transactions.csv --privacy_accuracy_tradeoff --category_bias --recommendation_diversity
+
+# Run only privacy-accuracy trade-off analysis
+python evaluate.py --privacy_accuracy_tradeoff
+'''

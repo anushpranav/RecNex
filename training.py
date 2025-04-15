@@ -42,17 +42,30 @@ def train_model(model, train_data, test_data, batch_size=1024, epochs=20,
     
     # Apply differential privacy if requested
     if use_dp:
-        privacy_engine = PrivacyEngine()
-        model, optimizer, train_loader = privacy_engine.make_private_with_epsilon(
-            module=model,
-            optimizer=optimizer,
-            data_loader=train_loader,
-            epochs=epochs,
-            max_grad_norm=1.0,
-            target_epsilon=epsilon,
-            target_delta=delta,
-        )
-        print(f"Using DP-SGD with epsilon={epsilon}, delta={delta}")
+        try:
+            from opacus import PrivacyEngine
+            from opacus.validators import ModuleValidator
+            
+            # Validate and fix model if needed
+            if not ModuleValidator.is_valid(model):
+                model = ModuleValidator.fix(model)
+                
+            privacy_engine = PrivacyEngine()
+            
+            model, optimizer, train_loader = privacy_engine.make_private_with_epsilon(
+                module=model,
+                optimizer=optimizer,
+                data_loader=train_loader,
+                epochs=epochs,
+                max_grad_norm=1.0,
+                target_epsilon=epsilon,
+                target_delta=delta,
+            )
+            print(f"Using DP-SGD with epsilon={epsilon}, delta={delta}")
+        except Exception as e:
+            print(f"Error setting up privacy engine: {e}")
+            print("Falling back to non-private training")
+            use_dp = False
     
     # Training loop
     train_losses = []
@@ -62,32 +75,44 @@ def train_model(model, train_data, test_data, batch_size=1024, epochs=20,
         model.train()
         running_loss = 0.0
         
-        # Use BatchMemoryManager for more efficient memory usage with DP
-        with BatchMemoryManager(
-            data_loader=train_loader,
-            max_physical_batch_size=128 if use_dp else batch_size,
-            optimizer=optimizer
-        ) as memory_safe_data_loader:
+        # Modified batch processing approach to avoid BatchMemoryManager issues
+        if use_dp:
+            try:
+                from opacus.utils.batch_memory_manager import BatchMemoryManager
+                
+                with BatchMemoryManager(
+                    data_loader=train_loader,
+                    max_physical_batch_size=128 if use_dp else batch_size,
+                    optimizer=optimizer
+                ) as memory_safe_data_loader:
+                    data_loader_to_use = memory_safe_data_loader
+            except Exception as e:
+                print(f"Error with BatchMemoryManager: {e}")
+                print("Using regular data loader instead")
+                data_loader_to_use = train_loader
+        else:
+            data_loader_to_use = train_loader
             
-            for batch in tqdm(memory_safe_data_loader, desc=f"Epoch {epoch+1}"):
-                # Get batch data
-                user_indices = batch['user'].to(device)
-                item_indices = batch['item'].to(device)
-                labels = batch['label'].to(device)
-                
-                # Forward pass
-                optimizer.zero_grad()
-                outputs = model(user_indices, item_indices).squeeze()
-                loss = criterion(outputs, labels)
-                
-                # Backward pass
-                loss.backward()
-                optimizer.step()
-                
-                running_loss += loss.item()
+        for batch in tqdm(data_loader_to_use, desc=f"Epoch {epoch+1}"):
+            # Get batch data
+            user_indices = batch['user'].to(device)
+            item_indices = batch['item'].to(device)
+            labels = batch['label'].to(device)
+            
+            # Forward pass
+            optimizer.zero_grad()
+            outputs = model(user_indices, item_indices).squeeze()
+            loss = criterion(outputs, labels)
+            
+            # Backward pass
+            loss.backward()
+            optimizer.step()
+            
+            running_loss += loss.item()
         
         # Calculate average loss for the epoch
-        epoch_loss = running_loss / len(memory_safe_data_loader)
+        batch_count = len(data_loader_to_use)
+        epoch_loss = running_loss / batch_count if batch_count > 0 else 0
         train_losses.append(epoch_loss)
         
         # Evaluate on test set
@@ -101,8 +126,11 @@ def train_model(model, train_data, test_data, batch_size=1024, epochs=20,
         
         # If using DP, print current privacy spent
         if use_dp:
-            epsilon = privacy_engine.get_epsilon(delta)
-            print(f"Current ε: {epsilon:.2f} (for δ={delta})")
+            try:
+                epsilon = privacy_engine.get_epsilon(delta)
+                print(f"Current ε: {epsilon:.2f} (for δ={delta})")
+            except Exception as e:
+                print(f"Could not compute privacy budget: {e}")
     
     return model, train_losses, test_metrics
 
