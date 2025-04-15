@@ -1,5 +1,7 @@
+#data_preprocessing.py
 import pandas as pd
 import numpy as np
+from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 
 def load_data(users_path, products_path, transactions_path):
@@ -37,7 +39,7 @@ def preprocess_data(users, products, transactions):
 
 def generate_negative_samples(positive_samples, num_users, num_items, negative_ratio=5):
     """
-    Generate negative samples for training.
+    Generate negative samples for training with improved sampling strategy.
     For each positive sample, generate 'negative_ratio' negative samples.
     """
     # Create a set of positive interactions for fast lookup
@@ -46,36 +48,71 @@ def generate_negative_samples(positive_samples, num_users, num_items, negative_r
         for idx, row in positive_samples.iterrows()
     ])
     
+    # Keep track of item popularity
+    item_popularity = np.zeros(num_items)
+    for _, row in positive_samples.iterrows():
+        item_popularity[row['product_idx']] += 1
+    
+    # Convert to probability distribution (less popular items have higher probability)
+    # Smoothing to avoid extreme values
+    item_weights = 1.0 / np.sqrt(item_popularity + 1)
+    
     negative_samples = []
     
     # For each user
-    for user_idx in range(num_users):
+    for user_idx in tqdm(range(num_users), desc="Generating negative samples"):
         # Get all items this user has interacted with
-        interacted_items = [
+        interacted_items = set([
             item for user, item in user_item_set if user == user_idx
-        ]
+        ])
         
         # Calculate how many negative samples we need for this user
         num_neg_samples = len(interacted_items) * negative_ratio
         
-        # Randomly sample non-interacted items
-        neg_items = []
-        while len(neg_items) < num_neg_samples:
-            item = np.random.randint(0, num_items)
-            if item not in interacted_items and (user_idx, item) not in user_item_set:
-                neg_items.append(item)
-                user_item_set.add((user_idx, item))  # Add to prevent duplicates
+        if len(interacted_items) == 0:
+            continue  # Skip users with no interactions
+        
+        # Create a probability distribution for this user
+        # Exclude items the user has already interacted with
+        user_weights = item_weights.copy()
+        for item in interacted_items:
+            user_weights[item] = 0
+        
+        if np.sum(user_weights) == 0:
+            continue  # Skip if all weights are zero
+            
+        user_weights = user_weights / np.sum(user_weights)
+        
+        # Sample non-interacted items based on the probability distribution
+        # Use a safety check to avoid index errors
+        available_items = np.where(user_weights > 0)[0]
+        if len(available_items) == 0:
+            continue
+            
+        neg_items = np.random.choice(
+            available_items,
+            size=min(num_neg_samples, len(available_items)),
+            replace=False,
+            p=user_weights[available_items] / np.sum(user_weights[available_items])
+        )
         
         # Create negative samples
         for item in neg_items:
-            negative_samples.append({
-                'user_idx': user_idx,
-                'product_idx': item,
-                'interaction': 0
-            })
+            if (user_idx, item) not in user_item_set:  # Double-check
+                negative_samples.append({
+                    'user_idx': user_idx,
+                    'product_idx': item,
+                    'interaction': 0
+                })
+                # Add to the set to prevent duplicates
+                user_item_set.add((user_idx, item))
     
     # Convert to DataFrame
     negative_df = pd.DataFrame(negative_samples)
+    
+    # Balance the dataset
+    if len(negative_df) > len(positive_samples) * 5:
+        negative_df = negative_df.sample(n=len(positive_samples) * 5, random_state=42)
     
     # Combine positive and negative samples
     full_data = pd.concat([positive_samples, negative_df], ignore_index=True)

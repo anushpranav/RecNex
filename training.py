@@ -1,3 +1,4 @@
+#training.py
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -10,8 +11,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from sklearn.metrics import precision_score, recall_score, roc_auc_score
 
-def train_model(model, train_data, test_data, batch_size=1024, epochs=20, 
-                lr=0.001, use_dp=True, epsilon=1.0, delta=1e-5):
+def train_model(model, train_data, test_data, batch_size=1024, epochs=20, lr=0.001, weight_decay=1e-5, use_dp=True, epsilon=1.0, delta=1e-5):
     """
     Train the NCF model with or without differential privacy.
     
@@ -22,6 +22,7 @@ def train_model(model, train_data, test_data, batch_size=1024, epochs=20,
         batch_size: Batch size for training
         epochs: Number of training epochs
         lr: Learning rate
+        weight_decay: L2 regularization
         use_dp: Whether to use differential privacy
         epsilon: Privacy budget (epsilon)
         delta: Privacy parameter (delta)
@@ -36,9 +37,8 @@ def train_model(model, train_data, test_data, batch_size=1024, epochs=20,
     train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_data, batch_size=batch_size)
     
-    # Loss function and optimizer
+    # Loss function
     criterion = nn.BCELoss()
-    optimizer = optim.Adam(model.parameters(), lr=lr)
     
     # Apply differential privacy if requested
     if use_dp:
@@ -50,6 +50,15 @@ def train_model(model, train_data, test_data, batch_size=1024, epochs=20,
             if not ModuleValidator.is_valid(model):
                 model = ModuleValidator.fix(model)
                 
+            # Important: Initialize optimizer BEFORE privacy engine
+            optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+            
+            # Make sure all parameters are initialized before passing to privacy engine
+            for param in model.parameters():
+                if param.requires_grad:
+                    # Just access the parameter to make sure it's initialized
+                    _ = param.data
+            
             privacy_engine = PrivacyEngine()
             
             model, optimizer, train_loader = privacy_engine.make_private_with_epsilon(
@@ -65,17 +74,30 @@ def train_model(model, train_data, test_data, batch_size=1024, epochs=20,
         except Exception as e:
             print(f"Error setting up privacy engine: {e}")
             print("Falling back to non-private training")
+            # Reinitialize optimizer since privacy engine might have modified it
+            optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
             use_dp = False
+    else:
+        optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    
+    # Learning rate scheduler
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='min', factor=0.5, patience=3, verbose=True
+    )
     
     # Training loop
     train_losses = []
     test_metrics = []
+    best_auc = 0.0
+    best_model_state = None
+    patience = 7  # Increased patience for better convergence
+    patience_counter = 0
     
     for epoch in range(epochs):
         model.train()
         running_loss = 0.0
         
-        # Modified batch processing approach to avoid BatchMemoryManager issues
+        # Modified batch processing approach for both DP and non-DP
         if use_dp:
             try:
                 from opacus.utils.batch_memory_manager import BatchMemoryManager
@@ -102,10 +124,21 @@ def train_model(model, train_data, test_data, batch_size=1024, epochs=20,
             # Forward pass
             optimizer.zero_grad()
             outputs = model(user_indices, item_indices).squeeze()
+            
+            # Handle potential dimension mismatch
+            if outputs.ndim == 0 and labels.ndim == 0:
+                outputs = outputs.unsqueeze(0)
+                labels = labels.unsqueeze(0)
+            
             loss = criterion(outputs, labels)
             
             # Backward pass
             loss.backward()
+            
+            # Gradient clipping (helps stabilize training)
+            if not use_dp:  # DP already clips gradients
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+                
             optimizer.step()
             
             running_loss += loss.item()
@@ -116,13 +149,30 @@ def train_model(model, train_data, test_data, batch_size=1024, epochs=20,
         train_losses.append(epoch_loss)
         
         # Evaluate on test set
-        test_metrics.append(evaluate_model(model, test_loader, device))
+        metrics = evaluate_model(model, test_loader, device)
+        test_metrics.append(metrics)
+        
+        # Update learning rate based on validation loss
+        scheduler.step(epoch_loss)
+        
+        # Save best model
+        if metrics['auc'] > best_auc:
+            best_auc = metrics['auc']
+            best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            patience_counter = 0
+        else:
+            patience_counter += 1
         
         # Print progress
         print(f"Epoch {epoch+1}/{epochs} - Loss: {epoch_loss:.4f} - "
-              f"Test AUC: {test_metrics[-1]['auc']:.4f} - "
-              f"Precision@10: {test_metrics[-1]['precision@10']:.4f} - "
-              f"Recall@10: {test_metrics[-1]['recall@10']:.4f}")
+              f"Test AUC: {metrics['auc']:.4f} - "
+              f"Precision@10: {metrics['precision@10']:.4f} - "
+              f"Recall@10: {metrics['recall@10']:.4f}")
+        
+        # Early stopping
+        if patience_counter >= patience:
+            print(f"Early stopping after {epoch+1} epochs with no improvement")
+            break
         
         # If using DP, print current privacy spent
         if use_dp:
@@ -131,6 +181,10 @@ def train_model(model, train_data, test_data, batch_size=1024, epochs=20,
                 print(f"Current ε: {epsilon:.2f} (for δ={delta})")
             except Exception as e:
                 print(f"Could not compute privacy budget: {e}")
+    
+    # Load best model state
+    if best_model_state is not None:
+        model.load_state_dict(best_model_state)
     
     return model, train_losses, test_metrics
 

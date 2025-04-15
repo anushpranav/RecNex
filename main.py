@@ -1,3 +1,4 @@
+#main.py
 import pandas as pd
 import numpy as np
 import torch
@@ -43,20 +44,27 @@ def main(args):
     
     # Initialize model
     print("Initializing NCF model...")
-    model = NCFModel(num_users, num_items, embedding_dim=args.embedding_dim, layers=args.layers)
+    model = NCFModel(
+        num_users, 
+        num_items, 
+        embedding_dim=args.embedding_dim, 
+        layers=[256, 128, 64, 32]  # Deeper architecture for better learning
+    )
     
-    # Train model
+    # Train model with better default settings
     print("Training model...")
     if args.use_dp:
         print(f"Using Differential Privacy with epsilon={args.epsilon}, delta={args.delta}")
     else:
         print("Training without privacy protection")
     
+    # Increase epochs and adjust learning rate for better convergence
     trained_model, train_losses, test_metrics = train_model(
         model, train_dataset, test_dataset,
         batch_size=args.batch_size,
-        epochs=args.epochs,
-        lr=args.learning_rate,
+        epochs=30,  # More epochs for better learning
+        lr=0.0005,  # Lower learning rate for stability
+        weight_decay=1e-4,  # Slightly higher regularization
         use_dp=args.use_dp,
         epsilon=args.epsilon,
         delta=args.delta
