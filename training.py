@@ -5,6 +5,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from opacus import PrivacyEngine
 from opacus.utils.batch_memory_manager import BatchMemoryManager
+from opacus.validators import ModuleValidator
 import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -43,8 +44,6 @@ def train_model(model, train_data, test_data, batch_size=1024, epochs=20, lr=0.0
     # Apply differential privacy if requested
     if use_dp:
         try:
-            from opacus import PrivacyEngine
-            from opacus.validators import ModuleValidator
             
             # Validate and fix model if needed
             if not ModuleValidator.is_valid(model):
@@ -100,7 +99,6 @@ def train_model(model, train_data, test_data, batch_size=1024, epochs=20, lr=0.0
         # Modified batch processing approach for both DP and non-DP
         if use_dp:
             try:
-                from opacus.utils.batch_memory_manager import BatchMemoryManager
                 
                 with BatchMemoryManager(
                     data_loader=train_loader,
