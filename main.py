@@ -1,4 +1,3 @@
-#main.py
 import pandas as pd
 import numpy as np
 import torch
@@ -8,9 +7,9 @@ import os
 
 # Import our modules
 # Assuming the code from previous snippets is saved in separate files
-from data_preprocessing import load_data, preprocess_data, generate_negative_samples, split_train_test
-from ncf_model import NCFModel, RecommendationDataset
-from training import train_model, plot_results, recommend_items
+from src.data_preprocesser import load_data, preprocess_data, generate_negative_samples, split_train_test
+from src.ncf_model import NCFModel, RecommendationDataset
+from src.trainer import train_model, plot_results, recommend_items
 
 def main(args):
     print("Privacy-Preserving Personalized Product Recommendations")
