@@ -1,4 +1,3 @@
-#evaluate.py
 import pandas as pd
 import numpy as np
 import torch
@@ -8,9 +7,9 @@ from sklearn.metrics import roc_curve, roc_auc_score
 import argparse
 
 # Import our modules
-from data_preprocessing import load_data, preprocess_data, generate_negative_samples, split_train_test
-from ncf_model import NCFModel, RecommendationDataset
-from training import train_model, evaluate_model, recommend_items
+from src.data_preprocesser import load_data, preprocess_data, generate_negative_samples, split_train_test
+from src.ncf_model import NCFModel, RecommendationDataset
+from src.trainer import train_model, evaluate_model, recommend_items
 
 def privacy_accuracy_tradeoff(data, num_users, num_items, epsilons=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0]):
     """

@@ -1,9 +1,8 @@
-#recommendation_gen.py
 import torch
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
-from ncf_model import NCFModel  # Make sure to import your model class
+from src.ncf_model import NCFModel  # Make sure to import your model class
 
 def load_model_and_mappings(model_path):
     """Load the trained model and mappings."""
